@@ -1,66 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
-        <members>AsyncJobConfigurationService</members>
-        <members>AsyncJobHandlerBase</members>
-        <members>AsyncJobHandlerHelper</members>
-        <members>BatchApexHandler</members>
-        <members>BatchApexHandlerTest</members>
-        <members>BatchApexHandlerTestBatch</members>
         <members>CollectionUtils</members>
         <members>CollectionUtilsTest</members>
         <members>EmailService</members>
         <members>EmailServiceTest</members>
-        <members>FieldTransitionConditionEvaluator</members>
-        <members>FieldTransitionFrameworkTest</members>
-        <members>FieldTransitionMetadataService</members>
-        <members>FieldTransitionRequirementController</members>
-        <members>FieldTransitionRequirementService</members>
-        <members>FieldTransitionValidator</members>
         <members>FileService</members>
         <members>FileServiceTest</members>
         <members>HttpCalloutService</members>
         <members>HttpCalloutServiceTest</members>
-        <members>MockTriggerHandler</members>
         <members>NotificationService</members>
         <members>NotificationServiceTest</members>
-        <members>QueueableApexHandler</members>
-        <members>QueueableApexHandlerTest</members>
-        <members>TriggerHandler</members>
-        <members>TriggerHandlerInterface</members>
-        <members>TriggerHandlerManager</members>
-        <members>TriggerHandlerManagerTest</members>
         <name>ApexClass</name>
     </types>
     <types>
-        <members>Async_Job_Configuration__mdt</members>
         <members>Email_Service_Setting__mdt</members>
-        <members>Field_Transition_Rule__mdt</members>
-        <members>Transition_Condition__mdt</members>
-        <members>Trigger_Handler__mdt</members>
         <name>CustomObject</name>
     </types>
     <types>
-        <members>Async_Job_Configuration__mdt-Async Job Configuration Layout</members>
         <members>Email_Service_Setting__mdt-Email Service Setting Layout</members>
-        <members>Field_Transition_Rule__mdt-Field Transition Rule Layout</members>
-        <members>Transition_Condition__mdt-Transition Condition Layout</members>
-        <members>Trigger_Handler__mdt-Trigger Handler Layout</members>
         <name>Layout</name>
     </types>
     <types>
         <members>Email_Service_Setting.Default</members>
         <name>CustomMetadata</name>
-    </types>
-    <types>
-        <members>Field_Transition_Blocked_Error</members>
-        <members>Field_Transition_Checklist_Title</members>
-        <members>Field_Transition_Checklist_Empty_State</members>
-        <name>CustomLabel</name>
-    </types>
-    <types>
-        <members>fieldTransitionChecklist</members>
-        <name>LightningComponentBundle</name>
     </types>
     <version>62.0</version>
 </Package>
