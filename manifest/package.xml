@@ -26,5 +26,5 @@
         <members>Email_Service_Setting.Default</members>
         <name>CustomMetadata</name>
     </types>
-    <version>67.0</version>
+    <version>66.0</version>
 </Package>
