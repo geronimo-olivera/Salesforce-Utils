@@ -185,6 +185,23 @@ try {
 }
 ```
 
+### Callouts after DML
+
+Salesforce doesn't allow a callout after a DML statement in the same transaction: it throws "You have uncommitted work pending". Make the callout first and save afterwards, or move the callout to a Queueable (with `Database.AllowsCallouts`) so it runs in its own transaction.
+
+### Why there's no automatic retry
+
+The service doesn't retry failed callouts on its own. Apex can't wait between attempts inside one transaction, so an immediate retry against a system that's down or rate-limiting you (429, 503) almost always fails again. And retrying a `POST` that actually reached the other side can create the same thing twice. When a retry makes sense, enqueue a Queueable with a delay (`System.enqueueJob(job, delayInMinutes)`) and make the request safe to repeat, for example with an idempotency key if the API supports one.
+
+## Permissions
+
+The service itself needs no special permission: any user who can run your Apex can make a callout through it. What decides whether the callout works is the endpoint:
+
+- **Named Credentials with an External Credential** (the current model): the running user needs a permission set that grants access to the External Credential's principal. Without it the callout fails with a credentials error, which the service throws as `HttpCalloutException`. This is the most common callout failure in production, because admins have access through their own setup and everyone else doesn't. Assign that permission set to every user, or integration user, whose actions trigger the callout.
+- **A plain URL**: it must be listed in Remote Site Settings, which applies to every user the same way.
+
+Callouts made from a Batch, Queueable or scheduled job run as the user who started the job, so that user is the one who needs the permission set.
+
 ## Testing
 
-`HttpCalloutServiceTest` deploys and runs at **100% code coverage** with a single inner mock (`CalloutMock`) that records every request it receives and can be configured to return a fixed status/body or simulate a network failure. No separate mock classes are needed to test this service.
+`HttpCalloutServiceTest` deploys and runs at **100% code coverage** with 6 test methods, one of them as a standard user, and a single inner mock (`CalloutMock`) that records every request it receives and can be configured to return a fixed status/body or simulate a network failure. No separate mock classes are needed to test this service.

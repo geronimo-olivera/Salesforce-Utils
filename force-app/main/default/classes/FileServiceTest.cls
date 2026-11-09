@@ -5,6 +5,12 @@ private class FileServiceTest {
     private static final Id FAKE_DOCUMENT_ID = '069000000000000AAA';
     private static final Id FAKE_VERSION_ID = '068000000000000AAA';
 
+    // INTERNAL_USERS needs Experience Cloud. These tests use it where the org supports it, and ALL_USERS otherwise,
+    // so they pass in any org. testInternalVisibilityDependsOnExperienceCloud covers both branches explicitly.
+    private static final Boolean INTERNAL_SUPPORTED = FileService.isInternalVisibilitySupported();
+    private static final FileService.FileVisibility RESTRICTED_VISIBILITY = INTERNAL_SUPPORTED ? FileService.FileVisibility.INTERNAL_USERS : FileService.FileVisibility.ALL_USERS;
+    private static final String RESTRICTED_VISIBILITY_VALUE = INTERNAL_SUPPORTED ? 'InternalUsers' : 'AllUsers';
+
     private static Opportunity createOpportunity(String name) {
         Opportunity opp = new Opportunity(Name = name, StageName = 'Prospecting', CloseDate = Date.today().addDays(30));
         insert opp;
@@ -130,13 +136,13 @@ private class FileServiceTest {
             documentId,
             new Set<Id>{ oppA.Id, oppB.Id, null },
             FileService.FileShareType.INFERRED,
-            FileService.FileVisibility.INTERNAL_USERS
+            RESTRICTED_VISIBILITY
         );
 
         Assert.areEqual(2, links.size(), 'one link per non-null record');
         ContentDocumentLink newLink = queryLink(documentId, oppB.Id);
         Assert.areEqual('I', newLink.ShareType, 'the new link uses the requested share type');
-        Assert.areEqual('InternalUsers', newLink.Visibility, 'the new link uses the requested visibility');
+        Assert.areEqual(RESTRICTED_VISIBILITY_VALUE, newLink.Visibility, 'the new link uses the requested visibility');
         Assert.areEqual('V', queryLink(documentId, oppA.Id).ShareType, 'an existing link is left untouched');
         Assert.areEqual(3, FileService.getLinks(documentId).size(), 'the owner plus the two records');
 
@@ -167,20 +173,21 @@ private class FileServiceTest {
         Id documentId = createUnlinkedFile('update.txt').ContentDocumentId;
         FileService.linkToRecord(documentId, opp.Id);
 
-        FileService.updateLink(documentId, opp.Id, FileService.FileShareType.INFERRED, FileService.FileVisibility.INTERNAL_USERS);
+        FileService.updateLink(documentId, opp.Id, FileService.FileShareType.INFERRED, RESTRICTED_VISIBILITY);
         ContentDocumentLink changed = queryLink(documentId, opp.Id);
         Assert.areEqual('I', changed.ShareType, 'share type updated');
-        Assert.areEqual('InternalUsers', changed.Visibility, 'visibility updated');
+        Assert.areEqual(RESTRICTED_VISIBILITY_VALUE, changed.Visibility, 'visibility updated');
+
+        FileService.updateLink(documentId, opp.Id, FileService.FileShareType.VIEWER, null);
+        ContentDocumentLink shareTypeChanged = queryLink(documentId, opp.Id);
+        Assert.areEqual('V', shareTypeChanged.ShareType, 'the passed share type is applied');
+        Assert.areEqual(RESTRICTED_VISIBILITY_VALUE, shareTypeChanged.Visibility, 'a null visibility leaves it unchanged');
 
         FileService.updateLink(documentId, opp.Id, null, FileService.FileVisibility.ALL_USERS);
         ContentDocumentLink visibilityOnly = queryLink(documentId, opp.Id);
-        Assert.areEqual('I', visibilityOnly.ShareType, 'a null share type leaves it unchanged');
+        Assert.areEqual('V', visibilityOnly.ShareType, 'a null share type leaves it unchanged');
         Assert.areEqual('AllUsers', visibilityOnly.Visibility, 'the passed visibility is applied');
 
-        FileService.updateLink(documentId, opp.Id, FileService.FileShareType.VIEWER, null);
-        ContentDocumentLink shareTypeOnly = queryLink(documentId, opp.Id);
-        Assert.areEqual('V', shareTypeOnly.ShareType, 'the passed share type is applied');
-        Assert.areEqual('AllUsers', shareTypeOnly.Visibility, 'a null visibility leaves it unchanged');
     }
 
     @isTest
@@ -188,10 +195,10 @@ private class FileServiceTest {
         Opportunity opp = createOpportunity('File Test 9');
         Blob content = Blob.valueOf('x');
 
-        ContentVersion linked = FileService.createFile('Linked', 'linked.txt', content, opp.Id, FileService.FileShareType.INFERRED, FileService.FileVisibility.INTERNAL_USERS);
+        ContentVersion linked = FileService.createFile('Linked', 'linked.txt', content, opp.Id, FileService.FileShareType.INFERRED, RESTRICTED_VISIBILITY);
         ContentDocumentLink link = queryLink(linked.ContentDocumentId, opp.Id);
         Assert.areEqual('I', link.ShareType, 'the file was linked with the requested share type');
-        Assert.areEqual('InternalUsers', link.Visibility, 'the file was linked with the requested visibility');
+        Assert.areEqual(RESTRICTED_VISIBILITY_VALUE, link.Visibility, 'the file was linked with the requested visibility');
 
         ContentVersion unlinked = FileService.createFile(null, 'unlinked.txt', content, null, FileService.FileShareType.VIEWER, FileService.FileVisibility.ALL_USERS);
         Assert.areEqual(1, FileService.getLinks(unlinked.ContentDocumentId).size(), 'without a record, only the owner link exists');
@@ -251,5 +258,66 @@ private class FileServiceTest {
         } catch (FileService.FileServiceException ex) {
             Assert.isTrue(ex.getMessage().contains('public link'), 'the only acceptable failure is public links being disabled');
         }
+    }
+
+    @isTest
+    static void testInternalVisibilityDependsOnExperienceCloud() {
+        Opportunity opp = createOpportunity('File Test 12');
+        Id documentId = createUnlinkedFile('internal.txt').ContentDocumentId;
+
+        if (INTERNAL_SUPPORTED) {
+            FileService.linkToRecord(documentId, opp.Id, FileService.FileShareType.VIEWER, FileService.FileVisibility.INTERNAL_USERS);
+            Assert.areEqual('InternalUsers', queryLink(documentId, opp.Id).Visibility, 'with Experience Cloud, InternalUsers is applied');
+        } else {
+            try {
+                FileService.linkToRecord(documentId, opp.Id, FileService.FileShareType.VIEWER, FileService.FileVisibility.INTERNAL_USERS);
+                Assert.fail('INTERNAL_USERS should be rejected without Experience Cloud');
+            } catch (FileService.FileServiceException ex) {
+                Assert.isTrue(ex.getMessage().contains('Experience Cloud'), 'the message says why');
+            }
+            Assert.areEqual(1, FileService.getLinks(documentId).size(), 'nothing was linked');
+        }
+    }
+
+    @isTest
+    static void testPublicLinkNameFitsLongTitles() {
+        ContentVersion version = FileService.createFile('T'.repeat(200), 'long-title.txt', Blob.valueOf('x'), null);
+        try {
+            ContentDistribution link = FileService.createPublicLink(version.Id);
+            String name = [SELECT Name FROM ContentDistribution WHERE Id = :link.Id].Name;
+            Assert.isTrue(name.length() <= 100, 'the link name is shortened to fit the field');
+        } catch (FileService.FileServiceException ex) {
+            Assert.isTrue(ex.getMessage().contains('public link'), 'the only acceptable failure is public links being disabled');
+        }
+    }
+
+    @isTest
+    static void testStandardUserWorksWithFilesOnTheirOwnRecords() {
+        User standardUser = UtilsTestData.createStandardUser();
+        System.runAs(standardUser) {
+            Account account = new Account(Name = 'Standard User Files');
+            insert account;
+
+            ContentVersion file = FileService.createFile('mine.txt', Blob.valueOf('mine'), account.Id);
+            Assert.areEqual(1, FileService.getFilesForRecord(account.Id).size(), 'a standard user sees the file on their own record');
+            Assert.areEqual('mine', FileService.getFileBody(file.ContentDocumentId).toString(), 'and can read its content');
+
+            FileService.deleteFile(file.ContentDocumentId);
+            Assert.isTrue(FileService.getFilesForRecord(account.Id).isEmpty(), 'and can delete a file they own');
+        }
+    }
+
+    @isTest
+    static void testStandardUserCannotDeleteSomeoneElsesFile() {
+        Id documentId = createUnlinkedFile('admin-owned.txt').ContentDocumentId;
+        User standardUser = UtilsTestData.createStandardUser();
+        System.runAs(standardUser) {
+            try {
+                FileService.deleteFile(documentId);
+            } catch (FileService.FileServiceException ex) {
+                Assert.isNotNull(ex.getMessage(), 'a refused delete surfaces as a FileServiceException');
+            }
+        }
+        Assert.areEqual(1, [SELECT COUNT() FROM ContentDocument WHERE Id = :documentId], 'the file someone else owns is still there');
     }
 }

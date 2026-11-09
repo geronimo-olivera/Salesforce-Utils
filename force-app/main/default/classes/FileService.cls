@@ -17,8 +17,15 @@ public inherited sharing class FileService {
      * available when the org's default sharing is private. Salesforce rejects it on a link to a record (verified on Opportunity:
      * "not permitted for this linked record").
      * Applies to links on standard and custom object records, not to users, groups, or libraries. External users can only use ALL_USERS.
+     * INTERNAL_USERS only exists in orgs with Experience Cloud (digital experiences) enabled: without it, every file is
+     * internal anyway and Salesforce rejects the value. See isInternalVisibilitySupported.
      */
     public enum FileVisibility { ALL_USERS, INTERNAL_USERS, SHARED_USERS }
+
+    /** ContentDistribution.Name holds at most 100 characters. */
+    private static final Integer MAX_PUBLIC_LINK_NAME_LENGTH = 100;
+
+    private static Boolean internalVisibilitySupported;
 
     private static final Map<FileShareType, String> SHARE_TYPE_VALUES = new Map<FileShareType, String>{
         FileShareType.VIEWER => 'V',
@@ -31,6 +38,18 @@ public inherited sharing class FileService {
         FileVisibility.INTERNAL_USERS => 'InternalUsers',
         FileVisibility.SHARED_USERS => 'SharedUsers'
     };
+
+    /**
+     * Whether this org accepts FileVisibility.INTERNAL_USERS, which needs Experience Cloud (digital experiences)
+     * to be enabled. The result is cached for the transaction.
+     * @return true if Experience Cloud is enabled in this org.
+     */
+    public static Boolean isInternalVisibilitySupported() {
+        if (internalVisibilitySupported == null) {
+            internalVisibilitySupported = Schema.getGlobalDescribe().containsKey('network');
+        }
+        return internalVisibilitySupported;
+    }
 
     private static final String DOWNLOAD_DOCUMENT_PATH = '/sfc/servlet.shepherd/document/download/';
     private static final String DOWNLOAD_VERSION_PATH = '/sfc/servlet.shepherd/version/download/';
@@ -164,7 +183,8 @@ public inherited sharing class FileService {
      * @param visibility Who can see the file on the records. Null lets Salesforce pick its default.
      * @return One ContentDocumentLink per record Id passed, existing or newly created.
      * @throws FileServiceException if contentDocumentId is null, COLLABORATOR is requested from an Apex trigger,
-     *         INFERRED is requested for the Organization object, or the insert fails.
+     *         INFERRED is requested for the Organization object, INTERNAL_USERS is requested in an org without
+     *         Experience Cloud, or the insert fails.
      */
     public static List<ContentDocumentLink> linkToRecords(Id contentDocumentId, Set<Id> recordIds, FileShareType shareType, FileVisibility visibility) {
         if (contentDocumentId == null) { throw new FileServiceException('Cannot link a file without a contentDocumentId.'); }
@@ -172,6 +192,7 @@ public inherited sharing class FileService {
         if (recordIds == null || recordIds.isEmpty()) { return result; }
 
         FileShareType effectiveShareType = shareType != null ? shareType : FileShareType.VIEWER;
+        requireSupportedVisibility(visibility);
         if (effectiveShareType == FileShareType.COLLABORATOR && System.Trigger.isExecuting) {
             throw new FileServiceException('Salesforce does not allow creating a COLLABORATOR link from an Apex trigger.');
         }
@@ -220,9 +241,11 @@ public inherited sharing class FileService {
      * @param contentDocumentId The linked file.
      * @param recordId The record the file is linked to.
      * @param shareType The new permission, or null to leave it unchanged.
-     * @param visibility The new visibility, or null to leave it unchanged.
+     * @param visibility The new visibility, or null to leave it unchanged. In an org without Experience Cloud every
+     *        link is already ALL_USERS, so ALL_USERS is a no-op there and INTERNAL_USERS is rejected.
      * @return The updated ContentDocumentLink.
-     * @throws FileServiceException if either Id is null, the file isn't linked to the record, or the update fails.
+     * @throws FileServiceException if either Id is null, the file isn't linked to the record, INTERNAL_USERS is
+     *         requested in an org without Experience Cloud, or the update fails.
      */
     public static ContentDocumentLink updateLink(Id contentDocumentId, Id recordId, FileShareType shareType, FileVisibility visibility) {
         if (contentDocumentId == null || recordId == null) {
@@ -237,11 +260,23 @@ public inherited sharing class FileService {
         if (links.isEmpty()) {
             throw new FileServiceException('File ' + contentDocumentId + ' is not linked to record ' + recordId + '.');
         }
+        requireSupportedVisibility(visibility);
         ContentDocumentLink link = links[0];
-        if (shareType != null) { link.ShareType = SHARE_TYPE_VALUES.get(shareType); }
-        if (visibility != null) { link.Visibility = VISIBILITY_VALUES.get(visibility); }
+        // Update only the fields being changed: a record straight from SOQL would also send back Visibility, which
+        // can't be written at all in an org without Experience Cloud.
+        ContentDocumentLink changes = new ContentDocumentLink(Id = link.Id);
+        if (shareType != null) {
+            changes.ShareType = SHARE_TYPE_VALUES.get(shareType);
+            link.ShareType = changes.ShareType;
+        }
+        // Without Experience Cloud every link is AllUsers already, so asking for ALL_USERS there changes nothing
+        // and is skipped instead of failing.
+        if (visibility != null && isInternalVisibilitySupported()) {
+            changes.Visibility = VISIBILITY_VALUES.get(visibility);
+            link.Visibility = changes.Visibility;
+        }
         try {
-            update link;
+            update changes;
         } catch (DmlException ex) {
             throw wrap('Failed to update the link between file ' + contentDocumentId + ' and record ' + recordId, ex);
         }
@@ -414,7 +449,8 @@ public inherited sharing class FileService {
     }
 
     /**
-     * Permanently deletes a file, including all its versions and every link to every record. Shortcut for deleteFiles.
+     * Deletes a file, including all its versions and every link to every record. The file goes to the Recycle Bin,
+     * where it can be restored for 15 days. Shortcut for deleteFiles.
      * @param contentDocumentId The file to delete.
      * @throws FileServiceException if the delete fails. No-op if contentDocumentId is null or not found.
      */
@@ -424,7 +460,9 @@ public inherited sharing class FileService {
     }
 
     /**
-     * Permanently deletes files, including all their versions and every link to every record. The cascaded
+     * Deletes files, including all their versions and every link to every record. The files go to the Recycle Bin,
+     * where they can be restored for 15 days. File access applies even from Apex: a user who isn't the file's
+     * owner (or an admin) can't delete it, so nothing is deleted for them. The cascaded
      * ContentDocumentLink deletes don't fire ContentDocumentLink triggers; ContentDocument triggers do fire.
      * @param contentDocumentIds The files to delete.
      * @throws FileServiceException if the delete fails. No-op if null/empty; Ids that don't exist are skipped.
@@ -460,7 +498,7 @@ public inherited sharing class FileService {
 
         ContentVersion version = getVersionById(contentVersionId);
         ContentDistribution distribution = new ContentDistribution(
-            Name = version.Title,
+            Name = version.Title.abbreviate(MAX_PUBLIC_LINK_NAME_LENGTH),
             ContentVersionId = contentVersionId,
             PreferencesAllowViewInBrowser = true
         );
@@ -474,6 +512,17 @@ public inherited sharing class FileService {
             FROM ContentDistribution
             WHERE Id = :distribution.Id
         ];
+    }
+
+    /**
+     * Rejects INTERNAL_USERS up front in an org that doesn't support it, with a message that says why, instead of
+     * letting the DML fail with Salesforce's generic "not permitted for this linked record".
+     * @param visibility The requested visibility. Null is always accepted.
+     */
+    private static void requireSupportedVisibility(FileVisibility visibility) {
+        if (visibility == FileVisibility.INTERNAL_USERS && !isInternalVisibilitySupported()) {
+            throw new FileServiceException('INTERNAL_USERS visibility needs Experience Cloud enabled in the org. Without it every file is internal already: pass null or ALL_USERS.');
+        }
     }
 
     private static ContentVersion getVersionById(Id contentVersionId) {

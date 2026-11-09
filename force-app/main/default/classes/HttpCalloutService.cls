@@ -8,6 +8,10 @@ public inherited sharing class HttpCalloutService {
 
     private static final Integer DEFAULT_TIMEOUT_MS = 30000;
 
+    /** How much of a failed response's body goes into the exception message. The full body stays on the response. */
+    @TestVisible
+    private static final Integer MAX_ERROR_BODY_LENGTH = 1000;
+
     /**
      * Sends a GET callout.
      * @param endpoint The callout endpoint.
@@ -171,13 +175,17 @@ public inherited sharing class HttpCalloutService {
     }
     
     /**
-     * Validates the HTTP response status code, throwing HttpCalloutException if it isn't 2xx.
+     * Validates the HTTP response status code, throwing HttpCalloutException if it isn't 2xx. The message includes
+     * the first 1000 characters of the body: enough to see the error, without flooding logs or the user's screen
+     * with a huge or sensitive payload. Read response.getBody() if you need all of it.
      * @param response The HTTP response to validate.
      * @param errorMessage The error message to include if the validation fails.
      */
     public static void validateResponse(HttpResponse response, String errorMessage) {
         if (!isResponseSuccessful(response)) {
-            throw new HttpCalloutException(errorMessage + '\nStatus: ' + response.getStatusCode() + ', Body: ' + response.getBody());
+            String body = response.getBody();
+            String shownBody = body == null ? '' : body.abbreviate(MAX_ERROR_BODY_LENGTH);
+            throw new HttpCalloutException(errorMessage + '\nStatus: ' + response.getStatusCode() + ', Body: ' + shownBody);
         }
     }
 

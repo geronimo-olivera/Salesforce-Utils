@@ -105,8 +105,16 @@ try {
 
 There is no per-recipient result to inspect (unlike `EmailService.sendEmails`, which returns `Messaging.SendEmailResult`) — custom notification delivery is fire-and-forget from Apex's perspective, and a recipient's own notification preferences (which channels they've enabled) aren't visible to Apex at all.
 
-There's also no `remainingNotificationInvocations()`-style helper like `EmailService.remainingEmailInvocations()` — Salesforce doesn't expose a `Limits` counter for custom notifications. The mitigation is structural, not a governor check: always pass every recipient into **one** `sendNotification` call (it takes a `Set<Id>`) instead of looping a call per recipient.
+There's also no `remainingNotificationInvocations()`-style helper like `EmailService.remainingEmailInvocations()` — Salesforce doesn't expose a `Limits` counter for custom notifications. The mitigation is structural, not a governor check: always pass every recipient into **one** `sendNotification` call (it takes a `Set<Id>`) instead of looping a call per recipient. Salesforce accepts at most 500 recipients per send, so `sendNotification` splits a larger set into groups of 500 for you.
+
+`getRecordFollowerIds` returns at most 1000 followers, the most Salesforce allows a non-admin user to read in one query. `getRecordOwnerId` throws `NotificationServiceException` for an object without `OwnerId`, such as the detail side of a master-detail relationship, instead of failing with a raw query error.
+
+## Permissions
+
+- **Sending** needs no special permission: any user who can run your Apex can send through a Custom Notification Type.
+- **Reading followers** works for non-admins as long as the query has a `LIMIT` of at most 1000, which `getRecordFollowerIds` always adds. Without it, Salesforce rejects the query for non-admin users only, so the problem never shows up when an admin tests it.
+- **Recipients** who can't see the target record still get the notification, but can't open the record from it. Notify people who have access to it.
 
 ## Testing
 
-`NotificationServiceTest` deploys and runs at **90% code coverage** with 4 test methods and no additional mock or helper classes. The gap is a real platform limitation, not a missing test: `Messaging.CustomNotification.send()` doesn't validate its `notificationTypeId` or simulate a failure in test context — a test was written explicitly to try to force the exception-wrapping branch (via an invalid `notificationTypeId`), and it didn't throw, confirming there's no way to exercise that `catch` block from a test. `Messaging.SendEmailResult`-style test hooks or an `HttpCalloutMock`-style test interface simply don't exist for this API.
+`NotificationServiceTest` deploys and runs at **93% code coverage** with 7 test methods, one of them as a standard user to confirm non-admins can read followers. Its only helper is the shared `UtilsTestData`. The gap is a real platform limitation, not a missing test: `Messaging.CustomNotification.send()` doesn't validate its `notificationTypeId` or simulate a failure in test context — a test was written explicitly to try to force the exception-wrapping branch (via an invalid `notificationTypeId`), and it didn't throw, confirming there's no way to exercise that `catch` block from a test. `Messaging.SendEmailResult`-style test hooks or an `HttpCalloutMock`-style test interface simply don't exist for this API.

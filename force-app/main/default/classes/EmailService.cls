@@ -2,6 +2,7 @@ public inherited sharing class EmailService {
 
     private static final String DEFAULT_EMAIL_SERVICE_SETTING = 'Default';
     private static OrgWideEmailAddress defaultOrgWideEmail;
+    private static Boolean defaultOrgWideEmailResolved = false;
 
     /**
      * Returns an Email Template by Developer Name (exact match).
@@ -40,7 +41,8 @@ public inherited sharing class EmailService {
      * @param templateId The Id of the EmailTemplate to use.
      * @param whoId The Contact, Lead, or User Id the email is about (also determines the recipient address).
      * @param whatId Optional related record Id (e.g. an Opportunity) for template merge fields.
-     * @param saveAsActivity Whether to log this email as an Activity on whoId.
+     * @param saveAsActivity Whether to log this email as an Activity on whoId. Always false when whoId is a User,
+     *        since Salesforce doesn't allow it.
      * @param orgWideEmailAddressId Optional Org-Wide Email Address Id. Falls back to the configured default when null.
      * @return A configured SingleEmailMessage, not yet sent.
      */
@@ -65,6 +67,8 @@ public inherited sharing class EmailService {
      * @param saveAsActivity Whether to log this email as an Activity on whoId.
      * @param orgWideEmailAddressId Optional Org-Wide Email Address Id. Falls back to the configured default when null.
      * @param replacements Map of placeholder text to its replacement value, applied to subject/HTML body/plain text body.
+     *        In the HTML body the values are HTML-escaped, so a value can't inject markup; to insert HTML, build the
+     *        body yourself with createEmail.
      * @return A configured SingleEmailMessage, not yet sent, or null if the template couldn't be rendered.
      */
     public static Messaging.SingleEmailMessage createRenderedTemplatedEmail(
@@ -79,7 +83,7 @@ public inherited sharing class EmailService {
         if (email == null) { return null; }
         if (replacements != null && !replacements.isEmpty()) {
             email.setSubject(replacePlaceholders(email.getSubject(), replacements));
-            email.setHtmlBody(replacePlaceholders(email.getHtmlBody(), replacements));
+            email.setHtmlBody(replacePlaceholders(email.getHtmlBody(), escapeValuesForHtml(replacements)));
             if (!String.isBlank(email.getPlainTextBody())) {
                 email.setPlainTextBody(replacePlaceholders(email.getPlainTextBody(), replacements));
             }
@@ -227,6 +231,22 @@ public inherited sharing class EmailService {
     }
 
     /**
+     * Checks the org's daily limit for single emails sent to external addresses, which the per-transaction limit
+     * above doesn't cover. Call it before a large send to fail early instead of halfway through.
+     * @param emailCount How many emails you're about to send.
+     * @return true if the org can still send that many single emails today.
+     */
+    public static Boolean hasDailyEmailCapacity(Integer emailCount) {
+        if (emailCount == null || emailCount <= 0) { return true; }
+        try {
+            Messaging.reserveSingleEmailCapacity(emailCount);
+            return true;
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    /**
      * Applies the provided Org-Wide Email Address or, when no Id is provided, applies the default Org-Wide Email Address.
      * @param email The email to configure. No-op if null.
      * @param orgWideEmailAddressId Optional Org-Wide Email Address Id.
@@ -252,9 +272,16 @@ public inherited sharing class EmailService {
      * @return The default OrgWideEmailAddress, or null if not configured.
      */
     private static OrgWideEmailAddress getDefaultOrgWideEmailAddress() {
-        if (defaultOrgWideEmail == null) {
+        if (!defaultOrgWideEmailResolved) {
+            defaultOrgWideEmailResolved = true;
             Email_Service_Setting__mdt setting = Email_Service_Setting__mdt.getInstance(DEFAULT_EMAIL_SERVICE_SETTING);
-            if (setting != null && !String.isBlank(setting.Default_Org_Wide_Email_Address__c)) { defaultOrgWideEmail = getOrgWideEmailAddress(setting.Default_Org_Wide_Email_Address__c); }
+            String configuredAddress = setting != null ? setting.Default_Org_Wide_Email_Address__c : null;
+            if (String.isNotBlank(configuredAddress)) {
+                defaultOrgWideEmail = getOrgWideEmailAddress(configuredAddress);
+                if (defaultOrgWideEmail == null) {
+                    System.debug(LoggingLevel.WARN, 'Email_Service_Setting__mdt.Default points to "' + configuredAddress + '", which is not an Org-Wide Email Address in this org. Emails will be sent from the running user instead.');
+                }
+            }
         }
         return defaultOrgWideEmail;
     }
@@ -270,7 +297,9 @@ public inherited sharing class EmailService {
     private static void configureEmail(Messaging.SingleEmailMessage email, Id whoId, Id whatId, Boolean saveAsActivity, Id orgWideEmailAddressId) {
         if (email == null) { return; }
         email.setTargetObjectId(whoId);
-        email.setSaveAsActivity(saveAsActivity);
+        // Salesforce rejects saveAsActivity = true when the target is a User, so it's switched off for them.
+        Boolean targetIsUser = whoId != null && whoId.getSObjectType() == User.SObjectType;
+        email.setSaveAsActivity(saveAsActivity == true && !targetIsUser);
         if (whatId != null) { email.setWhatId(whatId); }
         applyOrgWideEmailAddress(email, orgWideEmailAddressId);
     }
@@ -288,6 +317,19 @@ public inherited sharing class EmailService {
             result = result.replace(placeholder, replacements.get(placeholder) == null ? '' : replacements.get(placeholder));
         }
         return result;
+    }
+
+    /**
+     * @param replacements Map of placeholder text to its replacement value.
+     * @return a copy of replacements with every value HTML-escaped, for use in an HTML body.
+     */
+    private static Map<String, String> escapeValuesForHtml(Map<String, String> replacements) {
+        Map<String, String> escaped = new Map<String, String>();
+        for (String placeholder : replacements.keySet()) {
+            String value = replacements.get(placeholder);
+            escaped.put(placeholder, value == null ? null : value.escapeHtml4());
+        }
+        return escaped;
     }
 
     /**

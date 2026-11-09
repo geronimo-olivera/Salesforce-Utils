@@ -18,6 +18,20 @@ These used to live here too. Each one is now its own project, with its own docs,
 - [Field Transition Framework](https://github.com/geronimo-olivera/Field-Transition-Framework) — blocks a field change until configurable conditions are met, with a Lightning checklist.
 - [Async Apex Framework](https://github.com/geronimo-olivera/Async-Apex-Framework) — retries, failure emails and on/off switches for Batch and Queueable Apex.
 
+## Permissions
+
+None of the services need a custom permission set, but a few need setup that admins tend to have and other users don't: access to an External Credential for callouts, profile access to the Org-Wide Email Address for emails, and file ownership for deleting files. Each doc has a **Permissions** section with the details.
+
+## Tests
+
+Every service has its own test class, including tests that run as a standard user with `System.runAs`. They pass in a clean scratch org and in an org with Experience Cloud. To run them in a scratch org:
+
+```bash
+sf org create scratch --definition-file config/project-scratch-def.json --alias utils --duration-days 1 --target-dev-hub <your-dev-hub>
+sf project deploy start --manifest manifest/package.xml --target-org utils
+sf apex run test --target-org utils --test-level RunLocalTests --code-coverage --wait 20
+```
+
 ## Deploy to an org
 
 You need [VS Code with the Salesforce Extension Pack](https://developer.salesforce.com/tools/vscode/) and an authenticated org.

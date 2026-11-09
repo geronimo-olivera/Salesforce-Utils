@@ -34,10 +34,12 @@ Three objects are involved, and `FileService` hides most of that:
 | Value | API value | Meaning |
 |---|---|---|
 | `ALL_USERS` | `AllUsers` | Every user with permission to see the file, external users included. |
-| `INTERNAL_USERS` | `InternalUsers` | Only internal users with permission to see the file. |
+| `INTERNAL_USERS` | `InternalUsers` | Only internal users with permission to see the file. Needs Experience Cloud enabled in the org (see below). |
 | `SHARED_USERS` | `SharedUsers` | Users who can see the feed the file is posted to. Only for files shared with users, and only when the org's default sharing is private. |
 
 Passing `null` for either one is always allowed: a null `shareType` means `VIEWER`, and a null `visibility` leaves the field unset so **Salesforce picks its own default** (for a record link made by an internal user, `InternalUsers`).
+
+`INTERNAL_USERS` only exists in orgs with Experience Cloud (digital experiences) enabled. Without it every file is internal already, and Salesforce rejects the value with a generic "not permitted for this linked record". `FileService` checks first and throws a `FileServiceException` that says why. Call `FileService.isInternalVisibilitySupported()` if your code runs in orgs of both kinds.
 
 ### Rules the platform enforces (verified against a real org)
 
@@ -247,9 +249,20 @@ Methods that only read, or that remove something, are forgiving instead: a `null
 - Don't hand `getDownloadUrl` to someone who isn't logged in — use `createPublicLink` for that.
 - Don't run a `ContentDocumentLink` query of your own without filtering on `Id`, `ContentDocumentId`, or `LinkedEntityId` — Salesforce rejects unfiltered queries, which is why `FileService` always filters on one of them.
 
+## Permissions
+
+Salesforce Files apply their own access rules even from Apex, so a non-admin can hit errors an admin never sees:
+
+- **Creating a file** needs only "Create" on Files, which standard users have. Linking it to a record also needs access to that record.
+- **Linking an existing file** needs access to the file itself.
+- **Deleting a file:** only its owner or an admin can delete it. For anyone else nothing is deleted. Deleted files go to the Recycle Bin, where they can be restored for 15 days.
+- **Public links** need public links enabled in the org's Content Deliveries and Public Links settings, and the user may need permission to create them. Without either, `createPublicLink` throws. The link's name is the file's title, shortened to the 100 characters the field allows.
+
+`FileServiceTest` runs the common cases as a standard user to catch these before production.
+
 ## Testing
 
-`FileServiceTest` deploys and runs at **96% code coverage** with 10 test methods and no additional mock or helper classes. It creates real files and links against real `Opportunity` records, and covers creating, versioning, linking, updating, unlinking, deleting, the bulk reads, the download URLs, the all-or-nothing rollback, and each platform rule above.
+`FileServiceTest` deploys and runs at **96% code coverage** with 14 test methods, two of them as a standard user. Its only helper is the shared `UtilsTestData`. It passes both in orgs with Experience Cloud and in orgs without it: the tests that set a visibility use `INTERNAL_USERS` only where the org supports it. It creates real files and links against real `Opportunity` records, and covers creating, versioning, linking, updating, unlinking, deleting, the bulk reads, the download URLs, the all-or-nothing rollback, and each platform rule above.
 
 What it doesn't reach, and why:
 

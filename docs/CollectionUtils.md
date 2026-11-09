@@ -167,7 +167,7 @@ for (List<Id> chunk : CollectionUtils.partition(new List<Id>(accountIds), 200)) 
 
 ## Complete example
 
-Combines most of it: when opportunities move to Closed Won, work out each affected account's new won total, notify only the accounts that crossed a threshold, and hand the rest of the work to Queueables in chunks. Illustrative — `OpportunityWonHandler`, `Total_Won_Amount__c`, and `AccountRefreshQueueable` aren't part of this repo, only `CollectionUtils` is.
+Combines most of it: when opportunities move to Closed Won, work out each affected account's new won total, notify only the accounts that crossed a threshold, and hand the rest of the work to Queueables in chunks. Illustrative — `OpportunityWonHandler`, `Total_Won_Amount__c`, and `AccountRefreshQueueable` aren't part of this repo, only `CollectionUtils` is. `TriggerHandler` comes from the separate [Trigger Handler Framework](https://github.com/geronimo-olivera/Trigger-Handler-Framework).
 
 ```apex
 public class OpportunityWonHandler extends TriggerHandler {
@@ -228,6 +228,10 @@ Plus Salesforce's own `SObjectException` when a field wasn't queried — see [Ho
 - Don't use `getChanged` or `getChangedTo` outside a before/after update, or where you don't have the previous versions, and expect "no change" — with no previous version every populated field counts as changed. That's the right behavior on insert and the wrong one if you simply forgot to pass the old map.
 - Don't compare text for equality with `==` in your own code when case matters. `==` on Strings ignores case; these helpers don't.
 - Don't pass a field you didn't select in your SOQL. Salesforce throws `SObjectException` on the read.
+
+## Permissions
+
+None. `CollectionUtils` only works on records already in memory: no queries, no DML, nothing that depends on the running user.
 
 ## Testing
 

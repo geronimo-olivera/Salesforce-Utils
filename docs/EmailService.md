@@ -5,7 +5,7 @@ A centralized entry point for outbound emails. Every part of the org that needs 
 ## Contents
 
 - `force-app/main/default/classes/EmailService.cls` — the service itself.
-- `force-app/main/default/classes/EmailServiceTest.cls` — its test class, 100% code coverage.
+- `force-app/main/default/classes/EmailServiceTest.cls` — its test class, 98% code coverage.
 - `force-app/main/default/objects/Email_Service_Setting__mdt/` — custom metadata type holding the default Org-Wide Email Address.
 
 ## Custom metadata: `Email_Service_Setting__mdt`
@@ -184,6 +184,28 @@ Between the two examples, every method on `EmailService` is used: `getEmailTempl
 
 Every failure — a per-email rejection (`Messaging.SendEmailResult.isSuccess() == false`, e.g. an invalid address with `allOrNone = false`) or a hard failure (`System.EmailException`, e.g. `allOrNone = true` and one recipient is invalid) — surfaces as a single `EmailService.EmailServiceException` from `sendEmailsOrThrow`, so callers only need one `catch` block regardless of what went wrong.
 
+### Placeholders in HTML bodies
+
+`createRenderedTemplatedEmail` HTML-escapes the replacement values it puts into the HTML body, so a value that came from user input (a name, a comment) can't inject markup or links into the email. The subject and the plain-text body get the values as they are. If you really need to insert HTML, build the body yourself and use `createEmail`.
+
+### Emails to Users
+
+When the target (`whoId`) is a User, Salesforce doesn't allow saving the email as an activity. The service switches `saveAsActivity` off for User targets instead of letting the send fail.
+
+### The daily limit
+
+`remainingEmailInvocations()` only covers the per-transaction limit (10 `sendEmail` calls). Single emails to external addresses also count against a daily org limit. Before a large send, call `EmailService.hasDailyEmailCapacity(count)` to fail early instead of halfway through.
+
+### A default address that doesn't exist
+
+If `Email_Service_Setting__mdt.Default` points to an address that isn't an Org-Wide Email Address in the org, emails are sent from the running user instead, and the service logs a warning once per transaction.
+
+## Permissions
+
+- **Org-Wide Email Address:** the running user's profile must be allowed to use it. On the address in Setup, choose "Allow All Profiles to Use this From Address", or add each profile that sends. Otherwise the send fails and `sendEmailsOrThrow` throws. Jobs run as the user who started them, so for a Batch or Queueable that's the user who must be allowed.
+- **Email deliverability:** Setup → Deliverability must allow "All email". Sandboxes are created with "System email only", which blocks these emails for every user, admins included.
+- **Templates:** Apex can use any template no matter which folder it's in, so users don't need folder access.
+
 ## Testing
 
-`EmailServiceTest` deploys and runs at **100% code coverage** with 6 test methods and no additional mock or helper classes — Salesforce simulates `Messaging.sendEmail` automatically in test context, so no `HttpCalloutMock`-style setup is needed. The only real limitation: the "found" branch of `getOrgWideEmailAddress`/`getDefaultOrgWideEmailAddress` can't be exercised with a real `OrgWideEmailAddress`, since that object doesn't support DML inserts from Apex tests.
+`EmailServiceTest` deploys and runs at **98% code coverage** with 10 test methods, one of them as a standard user. Its only helper is the shared `UtilsTestData`, which creates that user. Salesforce simulates `Messaging.sendEmail` automatically in test context, so no `HttpCalloutMock`-style setup is needed. The only real limitation: the "found" branch of `getOrgWideEmailAddress`/`getDefaultOrgWideEmailAddress` can't be exercised with a real `OrgWideEmailAddress`, since that object doesn't support DML inserts from Apex tests. The test templates are created inside `System.runAs`, because inserting a setup object such as `EmailTemplate` in the same transaction as an Account fails with `MIXED_DML_OPERATION`.

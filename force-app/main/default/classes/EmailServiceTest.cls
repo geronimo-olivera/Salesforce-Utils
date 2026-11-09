@@ -3,14 +3,27 @@ private class EmailServiceTest {
 
     @TestSetup
     static void setupData() {
-        insert new EmailTemplate(
-            Name = 'Email Service Test Template',
-            DeveloperName = 'Email_Service_Test_Template',
-            FolderId = UserInfo.getUserId(),
-            TemplateType = 'text',
-            Subject = 'Test Subject {{CUSTOM_VALUE}}',
-            Body = 'Hello {!Contact.FirstName}. {{CUSTOM_VALUE}}'
-        );
+        // EmailTemplate is a setup object: inserting it in the same transaction as an Account fails with
+        // MIXED_DML_OPERATION, so it gets its own context through System.runAs.
+        System.runAs(new User(Id = UserInfo.getUserId())) {
+            insert new EmailTemplate(
+                Name = 'Email Service Test Template',
+                DeveloperName = 'Email_Service_Test_Template',
+                FolderId = UserInfo.getUserId(),
+                TemplateType = 'text',
+                Subject = 'Test Subject {{CUSTOM_VALUE}}',
+                Body = 'Hello {!Contact.FirstName}. {{CUSTOM_VALUE}}'
+            );
+            insert new EmailTemplate(
+                Name = 'Email Service Test Html Template',
+                DeveloperName = 'Email_Service_Test_Html_Template',
+                FolderId = UserInfo.getUserId(),
+                TemplateType = 'custom',
+                Subject = 'Html {{CUSTOM_VALUE}}',
+                HtmlValue = '<p>Hello {{CUSTOM_VALUE}}</p>',
+                Body = 'Hello {{CUSTOM_VALUE}}'
+            );
+        }
 
         Account account = new Account(Name = 'Email Service Test Account');
         insert account;
@@ -132,5 +145,53 @@ private class EmailServiceTest {
             Assert.isTrue(ex.getMessage().contains('Failed to send test email'));
         }
         Test.stopTest();
+    }
+
+    @IsTest
+    static void htmlPlaceholderValuesAreEscaped() {
+        EmailTemplate template = EmailService.getEmailTemplate('Email_Service_Test_Html_Template');
+        Contact contact = [SELECT Id FROM Contact LIMIT 1];
+
+        Messaging.SingleEmailMessage email = EmailService.createRenderedTemplatedEmail(
+            template.Id, contact.Id, null, false, null, new Map<String, String>{ '{{CUSTOM_VALUE}}' => '<b>Tom & Jerry</b>' }
+        );
+
+        Assert.isTrue(email.getHtmlBody().contains('&lt;b&gt;Tom &amp; Jerry&lt;/b&gt;'), 'the value is escaped in the HTML body');
+        Assert.isFalse(email.getHtmlBody().contains('<b>'), 'no markup from the value reaches the HTML body');
+        Assert.isTrue(email.getPlainTextBody().contains('<b>Tom & Jerry</b>'), 'the plain-text body keeps the value as is');
+    }
+
+    @IsTest
+    static void saveAsActivityIsSwitchedOffForUserTargets() {
+        EmailTemplate template = EmailService.getEmailTemplate('Email_Service_Test_Template');
+        Contact contact = [SELECT Id FROM Contact LIMIT 1];
+
+        Messaging.SingleEmailMessage toUser = EmailService.createTemplatedEmail(template.Id, UserInfo.getUserId(), null, true, null);
+        Messaging.SingleEmailMessage toContact = EmailService.createTemplatedEmail(template.Id, contact.Id, null, true, null);
+
+        Assert.isFalse(toUser.getSaveAsActivity(), 'Salesforce does not allow saving an activity for a User target');
+        Assert.isTrue(toContact.getSaveAsActivity(), 'a Contact target keeps the requested value');
+    }
+
+    @IsTest
+    static void dailyCapacityCheckHandlesEdgeCases() {
+        Assert.isTrue(EmailService.hasDailyEmailCapacity(null), 'nothing to send always fits');
+        Assert.isTrue(EmailService.hasDailyEmailCapacity(0), 'nothing to send always fits');
+        Assert.isTrue(EmailService.hasDailyEmailCapacity(1), 'a single email fits in a fresh org');
+        Assert.isFalse(EmailService.hasDailyEmailCapacity(100000000), 'an impossible amount does not fit');
+    }
+
+    @IsTest
+    static void standardUserCanBuildAndSendEmails() {
+        User standardUser = UtilsTestData.createStandardUser();
+        System.runAs(standardUser) {
+            Messaging.SingleEmailMessage email = EmailService.createEmail(
+                new List<String>{ 'recipient@example.com' }, 'Subject', '<p>Body</p>', null, null
+            );
+            Test.startTest();
+            List<Messaging.SendEmailResult> results = EmailService.sendEmails(new List<Messaging.SingleEmailMessage>{ email });
+            Test.stopTest();
+            Assert.isTrue(results[0].isSuccess(), 'a standard user can send through the service');
+        }
     }
 }

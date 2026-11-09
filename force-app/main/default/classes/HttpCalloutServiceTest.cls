@@ -94,6 +94,35 @@ private class HttpCalloutServiceTest {
         Test.stopTest();
     }
 
+    @IsTest
+    static void validateResponseShortensLongBodies() {
+        Test.setMock(HttpCalloutMock.class, new CalloutMock(500, 'x'.repeat(5000)));
+
+        Test.startTest();
+        HttpResponse response = HttpCalloutService.doGet('callout:Test/api/v1/test', null, null);
+        Test.stopTest();
+
+        try {
+            HttpCalloutService.validateResponse(response, 'Request failed');
+            Assert.fail('Expected HttpCalloutException to be thrown.');
+        } catch (HttpCalloutService.HttpCalloutException ex) {
+            Assert.isTrue(ex.getMessage().length() < 1200, 'the message carries only the start of the body');
+            Assert.areEqual(5000, response.getBody().length(), 'the full body is still on the response');
+        }
+    }
+
+    @IsTest
+    static void standardUserCanMakeCallouts() {
+        Test.setMock(HttpCalloutMock.class, new CalloutMock(200, '{"ok":true}'));
+        User standardUser = UtilsTestData.createStandardUser();
+        System.runAs(standardUser) {
+            Test.startTest();
+            HttpResponse response = HttpCalloutService.doGet('https://example.com/api', null, null);
+            Test.stopTest();
+            Assert.isTrue(HttpCalloutService.isResponseSuccessful(response), 'nothing in the service itself needs admin rights');
+        }
+    }
+
     private class CalloutMock implements HttpCalloutMock {
         List<HttpRequest> capturedRequests = new List<HttpRequest>();
         Integer statusCode;
