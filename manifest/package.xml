@@ -11,6 +11,7 @@
         <members>HttpCalloutServiceTest</members>
         <members>NotificationService</members>
         <members>NotificationServiceTest</members>
+        <members>UtilsTestData</members>
         <name>ApexClass</name>
     </types>
     <types>
@@ -25,5 +26,5 @@
         <members>Email_Service_Setting.Default</members>
         <name>CustomMetadata</name>
     </types>
-    <version>62.0</version>
+    <version>67.0</version>
 </Package>
