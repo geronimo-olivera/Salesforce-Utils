@@ -22,3 +22,7 @@ You need [VS Code with the Salesforce Extension Pack](https://developer.salesfor
 3. Right-click [`manifest/package.xml`](manifest/package.xml) and choose **SFDX: Deploy Source in Manifest to Org**.
 
 [`manifest/package.xml`](manifest/package.xml) lists every utility's components together. As more utilities are added, either extend this manifest or give each utility its own.
+
+## License
+
+Released under the [MIT License](LICENSE).
